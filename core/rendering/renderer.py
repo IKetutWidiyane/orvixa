@@ -46,6 +46,7 @@ class Renderer:
         if background_frame is None:
             return
         self.frame = background_frame.copy()
+        self.height, self.width = self.frame.shape[:2]
 
     def clear(self):
         self.frame[:] = COLORS.get('dark_bg', (0, 0, 0))

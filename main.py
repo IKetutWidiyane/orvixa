@@ -69,6 +69,7 @@ class ORVIXA:
         self.drawing_mode = False
         self.current_tool = "cursor"
         self.hand_positions = {}
+        self.active_drawing_hand = None
 
         # Performance
         self.frame_times = []
@@ -129,11 +130,16 @@ class ORVIXA:
         frame = cv2.flip(frame, 1)
 
         self.renderer.set_background(frame)
+        frame_height, frame_width = self.renderer.frame.shape[:2]
+        self.hud.width = frame_width
+        self.hud.height = frame_height
+        self.drawing_engine.ensure_size(frame_width, frame_height)
 
         hands = self.hand_tracker.process(frame)
         gestures = self.gesture_engine.detect_gesture(hands)
 
         self._process_interactions(hands, gestures)
+        self._process_drawing(hands, gestures)
         self._render_workspace()
 
         for hand in hands:
@@ -141,8 +147,8 @@ class ORVIXA:
 
             index_tip = hand.landmarks[8]
 
-            cursor_x = int(index_tip[0] * CAMERA_WIDTH)
-            cursor_y = int(index_tip[1] * CAMERA_HEIGHT)
+            cursor_x = int(index_tip[0] * frame_width)
+            cursor_y = int(index_tip[1] * frame_height)
 
             self.renderer.render_cursor(cursor_x, cursor_y)
 
@@ -174,6 +180,9 @@ class ORVIXA:
     # =========================
     def _process_interactions(self, hands: List, gestures: List):
         if not gestures:
+            return
+
+        if self.drawing_mode:
             return
 
         for gesture in gestures:
@@ -211,6 +220,42 @@ class ORVIXA:
             )
             self.logger.info("Object deleted")
 
+    def _process_drawing(self, hands: List, gestures: List):
+        if not self.drawing_mode:
+            self._stop_active_stroke()
+            return
+
+        pointing_gesture = next(
+            (gesture for gesture in gestures
+             if gesture.type == GestureType.POINTING and gesture.metadata),
+            None
+        )
+
+        if pointing_gesture is None:
+            self._stop_active_stroke()
+            return
+
+        finger_pos = pointing_gesture.metadata.get('finger_pos')
+        if finger_pos is None:
+            self._stop_active_stroke()
+            return
+
+        frame_height, frame_width = self.renderer.frame.shape[:2]
+        x = int(finger_pos[0] * frame_width)
+        y = int(finger_pos[1] * frame_height)
+
+        if self.active_drawing_hand != pointing_gesture.hand_id:
+            self._stop_active_stroke()
+            self.drawing_engine.start_drawing(x, y)
+            self.active_drawing_hand = pointing_gesture.hand_id
+        else:
+            self.drawing_engine.draw_at(x, y)
+
+    def _stop_active_stroke(self):
+        if self.active_drawing_hand is not None:
+            self.drawing_engine.stop_drawing()
+            self.active_drawing_hand = None
+
     # =========================
     # INPUT
     # =========================
@@ -226,9 +271,12 @@ class ORVIXA:
 
         elif key == ord('e'):
             self.drawing_engine.toggle_eraser()
+            self._update_drawing_tool_label()
 
         elif key == ord('d'):
             self.drawing_mode = not self.drawing_mode
+            self._stop_active_stroke()
+            self._update_drawing_tool_label()
             self.logger.info(f"Drawing mode: {self.drawing_mode}")
 
         elif key == ord('r'):
@@ -243,10 +291,50 @@ class ORVIXA:
         elif key == ord('1'):
             self._load_sample_media()
 
+        elif key in (ord('+'), ord('=')):
+            self._change_brush_size(1)
+
+        elif key in (ord('-'), ord('_')):
+            self._change_brush_size(-1)
+
+        elif key == ord('2'):
+            self._set_brush_color((0, 217, 255), "neon blue")
+
+        elif key == ord('3'):
+            self._set_brush_color((0, 255, 217), "cyan")
+
+        elif key == ord('4'):
+            self._set_brush_color((138, 43, 226), "purple")
+
+        elif key == ord('5'):
+            self._set_brush_color((0, 255, 0), "green")
+
         return True
 
     def _load_sample_media(self):
         self.logger.info("Sample media loading not yet implemented")
+
+    def _change_brush_size(self, delta: int):
+        size = self.drawing_engine.get_brush_size() + delta
+        self.drawing_engine.set_brush_size(size)
+        self._update_drawing_tool_label()
+        self.logger.info(f"Brush size: {self.drawing_engine.get_brush_size()}")
+
+    def _set_brush_color(self, color, name: str):
+        self.drawing_engine.set_brush_color(color)
+        if self.drawing_engine.is_eraser_active():
+            self.drawing_engine.toggle_eraser()
+        self._update_drawing_tool_label()
+        self.logger.info(f"Brush color: {name}")
+
+    def _update_drawing_tool_label(self):
+        if not self.drawing_mode:
+            self.hud.update_tool(self.current_tool)
+            return
+
+        mode = "Eraser" if self.drawing_engine.is_eraser_active() else "Brush"
+        size = self.drawing_engine.get_brush_size()
+        self.hud.update_tool(f"Drawing: {mode} {size}px")
 
     # =========================
     # SHUTDOWN
@@ -255,6 +343,7 @@ class ORVIXA:
         self.logger.info("Shutting down ORVIXA...")
 
         self.is_running = False
+        self._stop_active_stroke()
 
         self.camera.stop()
         self.hand_tracker.close()

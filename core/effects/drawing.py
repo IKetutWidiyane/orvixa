@@ -70,15 +70,30 @@ class DrawingCanvas:
     
     def start_stroke(self, x: int, y: int):
         """Start a new drawing stroke."""
+        x, y = self._clamp_point(x, y)
         self.is_drawing = True
         self.stroke_points.clear()
         self.point_filter.reset()
         self.stroke_points.append((int(x), int(y)))
+
+        if self.brush.is_eraser:
+            cv2.circle(self.canvas, (x, y), ERASER_SIZE // 2, (0, 0, 0, 0), -1)
+        else:
+            cv2.circle(
+                self.canvas,
+                (x, y),
+                max(1, self.brush.thickness // 2),
+                (*self.brush.color, 255),
+                -1,
+                cv2.LINE_AA
+            )
     
     def add_stroke_point(self, x: int, y: int):
         """Add point to current stroke."""
         if not self.is_drawing:
             return
+
+        x, y = self._clamp_point(x, y)
         
         point = np.array([x, y], dtype=np.float32)
         smoothed_point = self.point_filter.smooth(point)
@@ -101,25 +116,50 @@ class DrawingCanvas:
     
     def _draw_line(self, pt1: Tuple[int, int], pt2: Tuple[int, int]):
         """Draw line on canvas."""
-        # Create temporary RGB canvas
-        temp = cv2.cvtColor(self.canvas[:, :, :3], cv2.COLOR_BGR2RGB)
-        
-        # Draw anti-aliased line
-        cv2.line(temp, pt1, pt2, self.brush.color, self.brush.thickness,
-                cv2.LINE_AA)
-        
-        # Convert back
-        self.canvas[:, :, :3] = cv2.cvtColor(temp, cv2.COLOR_RGB2BGR)
+        cv2.line(
+            self.canvas,
+            pt1,
+            pt2,
+            (*self.brush.color, 255),
+            self.brush.thickness,
+            cv2.LINE_AA
+        )
     
     def _draw_eraser(self, pt1: Tuple[int, int], pt2: Tuple[int, int]):
         """Erase on canvas."""
         cv2.line(self.canvas, pt1, pt2, (0, 0, 0, 0), ERASER_SIZE, cv2.LINE_AA)
+
+    def _clamp_point(self, x: int, y: int) -> Tuple[int, int]:
+        """Keep drawing coordinates inside the canvas."""
+        return (
+            max(0, min(self.width - 1, int(x))),
+            max(0, min(self.height - 1, int(y)))
+        )
     
     def clear(self):
         """Clear entire canvas."""
         self.canvas.fill(0)
         self.canvas[:, :, 3] = 255  # Reset alpha
         self.logger.debug("Drawing canvas cleared")
+
+    def resize(self, width: int, height: int):
+        """Resize canvas while preserving existing strokes where possible."""
+        if width == self.width and height == self.height:
+            return
+
+        old_canvas = self.canvas
+        new_canvas = np.zeros((height, width, 4), dtype=np.uint8)
+        new_canvas[:, :, 3] = 255
+
+        copy_width = min(self.width, width)
+        copy_height = min(self.height, height)
+        new_canvas[:copy_height, :copy_width] = old_canvas[:copy_height, :copy_width]
+
+        self.width = width
+        self.height = height
+        self.canvas = new_canvas
+        self.end_stroke()
+        self.logger.info(f"Drawing canvas resized: {width}x{height}")
     
     def undo(self):
         """Simple undo by clearing (not full undo stack)."""
@@ -174,6 +214,10 @@ class DrawingEngine:
     def clear(self):
         """Clear canvas."""
         self.canvas.clear()
+
+    def ensure_size(self, width: int, height: int):
+        """Ensure drawing canvas matches the render frame size."""
+        self.canvas.resize(width, height)
     
     def set_brush_color(self, color: Tuple[int, int, int]):
         """Set brush color."""
@@ -186,6 +230,14 @@ class DrawingEngine:
     def toggle_eraser(self):
         """Toggle eraser."""
         self.canvas.toggle_eraser()
+
+    def is_eraser_active(self) -> bool:
+        """Return whether eraser mode is active."""
+        return self.canvas.brush.is_eraser
+
+    def get_brush_size(self) -> int:
+        """Return current brush size."""
+        return self.canvas.brush.thickness
     
     def get_frame(self) -> np.ndarray:
         """Get drawing canvas for display."""

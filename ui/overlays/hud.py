@@ -95,7 +95,7 @@ class HUDOverlay:
         
         # Instructions
         instructions = [
-            "Q: Exit | T: Toggle Tool | E: Eraser | C: Clear | SPACE: Draw"
+            "Q: Exit | D: Drawing | E: Eraser | C: Clear | +/-: Brush | 2-5: Color"
         ]
         
         for i, text in enumerate(instructions):
