@@ -27,6 +27,8 @@ class WorkspaceObject:
     layer: int = 0
     selected: bool = False
     locked: bool = False
+    media_type: str = "shape"
+    source_path: str = ""
 
     def get_bounds(self) -> Tuple[float, float, float, float]:
         hw = (self.width * self.scale) / 2

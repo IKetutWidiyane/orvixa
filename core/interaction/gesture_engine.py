@@ -79,29 +79,32 @@ class GestureEngine:
         fingers_up = self._detect_fingers_up(landmarks)
         thumb_index_distance = self._get_finger_distance(landmarks, 4, 8)
         palm_openness = self._calculate_palm_openness(landmarks)
+        palm_pos = np.mean(landmarks, axis=0)
+        index_pos = landmarks[8]
+        metadata = {
+            'palm_pos': palm_pos,
+            'finger_pos': index_pos,
+            'fingers_up': fingers_up.tolist()
+        }
         
         # Determine gesture type based on finger configuration
         if thumb_index_distance < PINCH_THRESHOLD:
             gesture_type = GestureType.PINCH
-            metadata = {'distance': thumb_index_distance}
+            metadata['distance'] = thumb_index_distance
         elif np.sum(fingers_up) == 1 and fingers_up[1]:  # Only index finger
             gesture_type = GestureType.POINTING
-            metadata = {'finger_pos': landmarks[8]}
         elif np.sum(fingers_up) == 2 and fingers_up[1] and fingers_up[2]:  # Peace sign
             gesture_type = GestureType.PEACE
-            metadata = {'finger_distance': self._get_finger_distance(landmarks, 8, 12)}
+            metadata['finger_distance'] = self._get_finger_distance(landmarks, 8, 12)
         elif np.sum(fingers_up) == 3:
             gesture_type = GestureType.THREE_FINGERS
-            metadata = {'fingers_up': fingers_up.tolist()}
         elif np.sum(fingers_up) == 0:  # Closed fist
             gesture_type = GestureType.CLOSED_FIST
-            metadata = {}
         elif np.all(fingers_up):  # Open palm
             gesture_type = GestureType.OPEN_PALM
-            metadata = {'palm_openness': palm_openness}
+            metadata['palm_openness'] = palm_openness
         else:
             gesture_type = GestureType.GRABBING
-            metadata = {'fingers_up': fingers_up.tolist()}
         
         # Calculate confidence (simplified)
         confidence = hand.confidence

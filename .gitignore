@@ -19,7 +19,9 @@ logs/
 # =========================
 # Media / Generated Files
 # =========================
-media/
+assets/images/
+assets/videos/
+assets/sounds/
 saves/
 
 # =========================

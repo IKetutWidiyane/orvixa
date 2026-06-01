@@ -7,13 +7,15 @@ import cv2
 import numpy as np
 import time
 import threading
+from pathlib import Path
 from typing import Optional, List
 import uuid
 
 from utils.logger import get_logger
 from utils.config import (
     CAMERA_WIDTH, CAMERA_HEIGHT, DEBUG_MODE,
-    SHOW_LANDMARKS, GESTURE_SMOOTHING
+    SHOW_LANDMARKS, GESTURE_SMOOTHING,
+    IMAGES_PATH, VIDEOS_PATH
 )
 
 from core.camera.capture import CameraCapture
@@ -70,6 +72,7 @@ class ORVIXA:
         self.current_tool = "cursor"
         self.hand_positions = {}
         self.active_drawing_hand = None
+        self.drag_state = {}
 
         # Performance
         self.frame_times = []
@@ -138,6 +141,7 @@ class ORVIXA:
         hands = self.hand_tracker.process(frame)
         gestures = self.gesture_engine.detect_gesture(hands)
 
+        self.video_manager.update_all()
         self._process_interactions(hands, gestures)
         self._process_drawing(hands, gestures)
         self._render_workspace()
@@ -180,9 +184,11 @@ class ORVIXA:
     # =========================
     def _process_interactions(self, hands: List, gestures: List):
         if not gestures:
+            self.drag_state.clear()
             return
 
         if self.drawing_mode:
+            self.drag_state.clear()
             return
 
         for gesture in gestures:
@@ -192,6 +198,15 @@ class ORVIXA:
             elif gesture.type == GestureType.PINCH:
                 self._handle_pinch(gesture)
 
+            elif gesture.type == GestureType.PEACE:
+                self._handle_drag(gesture)
+
+            elif gesture.type == GestureType.GRABBING:
+                self._handle_drag(gesture)
+
+            elif gesture.type == GestureType.THREE_FINGERS:
+                self._handle_rotate(gesture)
+
             elif gesture.type == GestureType.OPEN_PALM:
                 self._handle_open_palm(gesture)
 
@@ -199,15 +214,55 @@ class ORVIXA:
                 self._handle_closed_fist(gesture)
 
     def _handle_pointing(self, gesture):
-        self.sound_manager.play_sound('click')
+        pos = self._gesture_position(gesture)
+        if pos is None:
+            return
+
+        world_x, world_y = self._screen_to_world_normalized(pos)
+        previous = self.workspace.selected_object
+        selected = self.workspace.select_object_at(world_x, world_y)
+
+        if selected and selected is not previous:
+            self.sound_manager.play_sound('click')
 
     def _handle_pinch(self, gesture):
         if gesture.metadata:
             distance = gesture.metadata.get('distance', 0)
 
             if distance < 0.03:
-                self.workspace.zoom_in(1.05)
+                if self.workspace.selected_object:
+                    self.workspace.selected_object.resize(1.03)
+                else:
+                    self.workspace.zoom_in(1.05)
                 self.sound_manager.play_sound('zoom')
+
+    def _handle_drag(self, gesture):
+        pos = self._gesture_position(gesture)
+        if pos is None:
+            return
+
+        world_x, world_y = self._screen_to_world_normalized(pos)
+        selected = self.workspace.selected_object
+
+        if selected is None:
+            selected = self.workspace.select_object_at(world_x, world_y)
+
+        if selected is None or selected.locked:
+            return
+
+        state = self.drag_state.get(gesture.hand_id)
+        if state is None:
+            self.drag_state[gesture.hand_id] = (world_x, world_y)
+            return
+
+        last_x, last_y = state
+        selected.move(world_x - last_x, world_y - last_y)
+        self.drag_state[gesture.hand_id] = (world_x, world_y)
+
+    def _handle_rotate(self, gesture):
+        selected = self.workspace.selected_object
+        if selected:
+            selected.rotate(3.0)
 
     def _handle_open_palm(self, gesture):
         self.workspace.reset_view()
@@ -215,9 +270,12 @@ class ORVIXA:
 
     def _handle_closed_fist(self, gesture):
         if self.workspace.selected_object:
+            object_id = self.workspace.selected_object.object_id
             self.workspace.remove_object(
-                self.workspace.selected_object.object_id
+                object_id
             )
+            self.image_manager.remove_image(object_id)
+            self.video_manager.remove_video(object_id)
             self.logger.info("Object deleted")
 
     def _process_drawing(self, hands: List, gestures: List):
@@ -312,7 +370,91 @@ class ORVIXA:
         return True
 
     def _load_sample_media(self):
-        self.logger.info("Sample media loading not yet implemented")
+        loaded = 0
+
+        for image_path in self._iter_media_files(IMAGES_PATH, {'.png', '.jpg', '.jpeg', '.bmp', '.webp'}):
+            loaded += self._add_image_media(str(image_path), loaded)
+
+        for video_path in self._iter_media_files(VIDEOS_PATH, {'.mp4', '.avi', '.mov', '.mkv', '.webm'}):
+            loaded += self._add_video_media(str(video_path), loaded)
+
+        if loaded == 0:
+            self._add_demo_media()
+            loaded = 1
+
+        self.sound_manager.play_sound('hologram')
+        self.logger.info(f"Loaded {loaded} media object(s)")
+
+    def _iter_media_files(self, folder: str, extensions: set):
+        path = Path(folder)
+        if not path.exists():
+            return []
+        return sorted(
+            file for file in path.iterdir()
+            if file.is_file() and file.suffix.lower() in extensions
+        )
+
+    def _add_image_media(self, image_path: str, index: int) -> int:
+        object_id = f"image_{uuid.uuid4().hex[:8]}"
+        obj = self.image_manager.load_image(
+            object_id,
+            image_path,
+            -250 + index * 120,
+            -120 + index * 70
+        )
+        if obj and self.workspace.add_object(obj):
+            return 1
+        return 0
+
+    def _add_video_media(self, video_path: str, index: int) -> int:
+        object_id = f"video_{uuid.uuid4().hex[:8]}"
+        obj = self.video_manager.load_video(
+            object_id,
+            video_path,
+            -250 + index * 120,
+            -120 + index * 70
+        )
+        if obj and self.workspace.add_object(obj):
+            obj.play()
+            return 1
+        return 0
+
+    def _add_demo_media(self):
+        object_id = f"demo_{uuid.uuid4().hex[:8]}"
+        obj = WorkspaceObject(object_id, 0, 0, 420, 260)
+        obj.media_type = "demo"
+        obj.get_display_frame = self._create_demo_media_frame
+        self.workspace.add_object(obj)
+
+    def _create_demo_media_frame(self):
+        frame = np.zeros((260, 420, 3), dtype=np.uint8)
+        frame[:] = (16, 18, 34)
+        cv2.rectangle(frame, (0, 0), (419, 259), (0, 217, 255), 3)
+        cv2.line(frame, (30, 210), (390, 50), (0, 255, 217), 3)
+        cv2.circle(frame, (105, 95), 42, (138, 43, 226), -1)
+        cv2.putText(frame, "ORVIXA MEDIA", (70, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 217, 255), 2)
+        cv2.putText(frame, "Drop files in assets/images or assets/videos", (34, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+        return frame
+
+    def _gesture_position(self, gesture):
+        if not gesture.metadata:
+            return None
+        if 'finger_pos' in gesture.metadata:
+            return gesture.metadata['finger_pos']
+        if 'palm_pos' in gesture.metadata:
+            return gesture.metadata['palm_pos']
+        return None
+
+    def _screen_to_world_normalized(self, pos):
+        frame_height, frame_width = self.renderer.frame.shape[:2]
+        screen_x = int(pos[0] * frame_width)
+        screen_y = int(pos[1] * frame_height)
+        return self.workspace.screen_to_world(
+            screen_x,
+            screen_y,
+            frame_width,
+            frame_height
+        )
 
     def _change_brush_size(self, delta: int):
         size = self.drawing_engine.get_brush_size() + delta
