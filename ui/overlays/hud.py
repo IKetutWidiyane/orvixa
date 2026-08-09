@@ -99,7 +99,7 @@ class HUDOverlay:
         # Instructions
         instructions = [
             "Q: Exit | D: Drawing | E: Eraser | C: Clear | +/-: Brush | 2-5: Color",
-            "Shape: 6:Rect 7:Circle 8:Triangle 9:Diamond 0:Star S:Cycle",
+            "Shape: 6:Rect 7:Circle 8:Triangle 9:Diamond 0:Star H:Hex S:Cycle",
             "Gesture: PEACE (2 fingers) to draw shape | Draw by moving fingers apart"
         ]
         
