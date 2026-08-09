@@ -6,10 +6,12 @@ workspace visuals, hologram effects, and HUD rendering.
 
 import cv2
 import numpy as np
+import math
 
 from utils.logger import get_logger
 from utils.config import COLORS
 from core.workspace.manager import WorkspaceObject, VirtualWorkspace
+from core.shapes.shape_manager import ShapeType
 
 
 class Renderer:
@@ -62,6 +64,8 @@ class Renderer:
         media_frame = self._get_object_frame(obj, screen_w, screen_h)
         if media_frame is not None:
             self._draw_media_frame(media_frame, screen_x, screen_y, obj.opacity)
+        elif obj.media_type.startswith("shape_"):
+            self._draw_shape_object(obj, screen_x, screen_y, screen_w, screen_h)
         else:
             cv2.rectangle(
                 self.frame,
@@ -74,6 +78,95 @@ class Renderer:
         if obj.selected:
             self._draw_selection_box(screen_x, screen_y, screen_w, screen_h)
         self._draw_layer_indicator(screen_x, screen_y, obj.layer)
+
+    def _draw_shape_object(self, obj: WorkspaceObject, cx: int, cy: int, w: int, h: int):
+        """Draw a shape object with neon hologram style."""
+        shape_name = obj.media_type.replace("shape_", "")
+        color = COLORS["neon_blue"]
+        fill_color = (15, 30, 50)  # Subtle fill
+
+        # Build points for polygon shapes
+        hw, hh = w // 2, h // 2
+        points = []
+
+        if shape_name == "rectangle":
+            x1, y1 = cx - hw, cy - hh
+            x2, y2 = cx + hw, cy + hh
+            cv2.rectangle(self.frame, (x1, y1), (x2, y2), fill_color, -1)
+            cv2.rectangle(self.frame, (x1, y1), (x2, y2), color, 3)
+            self._draw_shape_glow(self.frame, cx, cy, w, h, color)
+
+        elif shape_name == "circle":
+            radius = min(hw, hh)
+            cv2.circle(self.frame, (cx, cy), radius, fill_color, -1)
+            cv2.circle(self.frame, (cx, cy), radius, color, 3)
+            self._draw_shape_glow(self.frame, cx, cy, radius * 2, radius * 2, color)
+
+        elif shape_name == "triangle":
+            points = [
+                (cx, cy - hh),
+                (cx - hw, cy + hh),
+                (cx + hw, cy + hh),
+            ]
+            self._fill_polygon(points, fill_color)
+            cv2.polylines(self.frame, [np.array(points)], True, color, 3)
+            self._draw_shape_glow(self.frame, cx, cy, w, h, color)
+
+        elif shape_name == "diamond":
+            points = [
+                (cx, cy - hh),
+                (cx + hw, cy),
+                (cx, cy + hh),
+                (cx - hw, cy),
+            ]
+            self._fill_polygon(points, fill_color)
+            cv2.polylines(self.frame, [np.array(points)], True, color, 3)
+            self._draw_shape_glow(self.frame, cx, cy, w, h, color)
+
+        elif shape_name == "star":
+            outer_radius = min(hw, hh)
+            inner_radius = outer_radius * 0.4
+            center = (cx, cy)
+            points = []
+            for i in range(10):
+                radius = outer_radius if i % 2 == 0 else inner_radius
+                angle = math.radians(-90 + i * 36)
+                px = center[0] + radius * math.cos(angle)
+                py = center[1] + radius * math.sin(angle)
+                points.append((int(px), int(py)))
+            self._fill_polygon(points, fill_color)
+            cv2.polylines(self.frame, [np.array(points)], True, color, 3)
+            self._draw_shape_glow(self.frame, cx, cy, outer_radius * 2, outer_radius * 2, color)
+
+        elif shape_name == "hexagon":
+            radius = min(hw, hh)
+            center = (cx, cy)
+            points = []
+            for i in range(6):
+                angle = math.radians(60 * i)
+                px = center[0] + radius * math.cos(angle)
+                py = center[1] + radius * math.sin(angle)
+                points.append((int(px), int(py)))
+            self._fill_polygon(points, fill_color)
+            cv2.polylines(self.frame, [np.array(points)], True, color, 3)
+            self._draw_shape_glow(self.frame, cx, cy, radius * 2, radius * 2, color)
+
+    def _fill_polygon(self, points: list, color):
+        """Fill a polygon with given color."""
+        if len(points) < 3:
+            return
+        pts = np.array(points, dtype=np.int32)
+        cv2.fillPoly(self.frame, [pts], color)
+
+    def _draw_shape_glow(self, frame, cx, cy, w, h, color):
+        """Draw a subtle glow effect around shapes."""
+        glow_frame = frame.copy()
+        # Outer glow
+        if w > 2 and h > 2:
+            cv2.rectangle(glow_frame, (cx - w // 2 - 8, cy - h // 2 - 8),
+                          (cx + w // 2 + 8, cy + h // 2 + 8),
+                          color, 1)
+        frame[:] = cv2.addWeighted(glow_frame, 0.25, frame, 0.75, 0)
 
     def _get_object_frame(self, obj: WorkspaceObject, width: int, height: int):
         frame = None

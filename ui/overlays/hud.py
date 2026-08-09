@@ -29,6 +29,7 @@ class HUDOverlay:
         self.active_tool = "Cursor"
         self.object_count = 0
         self.zoom_level = 1.0
+        self.active_shape = "rectangle"
     
     def render(self, frame: np.ndarray) -> np.ndarray:
         """Render HUD onto frame."""
@@ -85,6 +86,8 @@ class HUDOverlay:
                    font, 0.6, color, 1)
         cv2.putText(frame, f"Zoom: {self.zoom_level:.2f}x", (40, y_pos + line_height * 3),
                    font, 0.6, color, 1)
+        cv2.putText(frame, f"Shape: {self.active_shape}", (40, y_pos + line_height * 4),
+                   font, 0.6, secondary_color, 1)
     
     def _render_bottom_info(self, frame: np.ndarray):
         """Render bottom information bar."""
@@ -95,7 +98,9 @@ class HUDOverlay:
         
         # Instructions
         instructions = [
-            "Q: Exit | D: Drawing | E: Eraser | C: Clear | +/-: Brush | 2-5: Color"
+            "Q: Exit | D: Drawing | E: Eraser | C: Clear | +/-: Brush | 2-5: Color",
+            "Shape: 6:Rect 7:Circle 8:Triangle 9:Diamond 0:Star S:Cycle",
+            "Gesture: PEACE (2 fingers) to draw shape | Draw by moving fingers apart"
         ]
         
         for i, text in enumerate(instructions):
@@ -121,6 +126,10 @@ class HUDOverlay:
     def update_zoom(self, zoom: float):
         """Update zoom level."""
         self.zoom_level = zoom
+
+    def update_shape(self, shape_name: str):
+        """Update active shape display."""
+        self.active_shape = shape_name
 
 
 class CornerIndicator:

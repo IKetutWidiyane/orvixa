@@ -25,6 +25,7 @@ from core.workspace.manager import VirtualWorkspace, WorkspaceObject
 from core.rendering.renderer import Renderer
 from core.effects.drawing import DrawingEngine
 from core.effects.sound import SoundManager
+from core.shapes.shape_manager import ShapeManager, ShapeType
 
 from media.image.image_manager import ImageManager
 from media.video.video_manager import VideoManager
@@ -66,6 +67,10 @@ class ORVIXA:
         self.frame_count = 0
         self.start_time = time.time()
 
+        # Shape system
+        self.shape_manager = ShapeManager()
+        self.current_shape = ShapeType.RECTANGLE
+
         # Interaction state
         self.selected_hand = None
         self.drawing_mode = False
@@ -73,6 +78,7 @@ class ORVIXA:
         self.hand_positions = {}
         self.active_drawing_hand = None
         self.drag_state = {}
+        self.hud.update_shape(self.current_shape.value)
 
         # Performance
         self.frame_times = []
@@ -183,13 +189,24 @@ class ORVIXA:
     # INTERACTIONS
     # =========================
     def _process_interactions(self, hands: List, gestures: List):
+        # Handle completed shape drawing when PEACE gesture stops
         if not gestures:
+            self.shape_manager.process_two_fingers(None, None)
             self.drag_state.clear()
             return
 
         if self.drawing_mode:
+            self.shape_manager.process_two_fingers(None, None)
             self.drag_state.clear()
             return
+
+        # Check if PEACE gesture is present, if not complete any shape drawing
+        has_peace = any(g.type == GestureType.PEACE for g in gestures)
+        if not has_peace:
+            new_object = self.shape_manager.process_two_fingers(None, None)
+            if new_object:
+                self.workspace.add_object(new_object)
+                self.logger.info(f"Shape created: {new_object.media_type}")
 
         for gesture in gestures:
             if gesture.type == GestureType.POINTING:
@@ -199,7 +216,7 @@ class ORVIXA:
                 self._handle_pinch(gesture)
 
             elif gesture.type == GestureType.PEACE:
-                self._handle_drag(gesture)
+                self._handle_shape_drawing(gesture)
 
             elif gesture.type == GestureType.GRABBING:
                 self._handle_drag(gesture)
@@ -258,6 +275,41 @@ class ORVIXA:
         last_x, last_y = state
         selected.move(world_x - last_x, world_y - last_y)
         self.drag_state[gesture.hand_id] = (world_x, world_y)
+
+    def _handle_shape_drawing(self, gesture):
+        """Create shapes by drawing with two fingers (PEACE gesture)."""
+        if not gesture.metadata:
+            return
+
+        finger_pos = gesture.metadata.get('finger_pos')
+        if finger_pos is None:
+            self.shape_manager.cancel_drawing()
+            return
+
+        # Estimate middle finger position from finger distance
+        # Middle finger is positioned to one side of the index finger
+        middle_pos = None
+        if 'finger_distance' in gesture.metadata:
+            distance = gesture.metadata.get('finger_distance', 0.05)
+            # Offset middle finger perpendicular to index finger
+            # (approx. 60% of the index-to-middle distance to the right-down side)
+            offset = distance * 0.6
+            middle_pos = (
+                float(finger_pos[0]) + offset,
+                float(finger_pos[1]) + offset * 0.5
+            )
+
+        new_object = self.shape_manager.process_two_fingers(
+            hand_id=gesture.hand_id,
+            index_pos=(float(finger_pos[0]), float(finger_pos[1])),
+            middle_pos=middle_pos,
+            default_shape=self.current_shape
+        )
+
+        if new_object:
+            self.workspace.add_object(new_object)
+            self.sound_manager.play_sound('hologram')
+            self.logger.info(f"Shape created: {new_object.media_type}")
 
     def _handle_rotate(self, gesture):
         selected = self.workspace.selected_object
@@ -367,7 +419,42 @@ class ORVIXA:
         elif key == ord('5'):
             self._set_brush_color((0, 255, 0), "green")
 
+        # Shape selection menu (F1-F6 or digit keys 6-0)
+        elif key == ord('6'):
+            self._change_shape(ShapeType.RECTANGLE)
+
+        elif key == ord('7'):
+            self._change_shape(ShapeType.CIRCLE)
+
+        elif key == ord('8'):
+            self._change_shape(ShapeType.TRIANGLE)
+
+        elif key == ord('9'):
+            self._change_shape(ShapeType.DIAMOND)
+
+        elif key == ord('0'):
+            self._change_shape(ShapeType.STAR)
+
+        elif key == ord('h'):
+            self._change_shape(ShapeType.HEXAGON)
+
+        elif key == ord('s'):
+            self._cycle_shape()
+
         return True
+
+    def _change_shape(self, shape_type: ShapeType):
+        """Set and display the active shape type."""
+        self.current_shape = shape_type
+        self.hud.update_shape(shape_type.value)
+        self.logger.info(f"Active shape: {shape_type.value}")
+
+    def _cycle_shape(self):
+        """Cycle through all available shape types."""
+        shapes = list(ShapeType)
+        current_index = shapes.index(self.current_shape)
+        next_index = (current_index + 1) % len(shapes)
+        self._change_shape(shapes[next_index])
 
     def _load_sample_media(self):
         loaded = 0
