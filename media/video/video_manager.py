@@ -163,7 +163,8 @@ class VideoManager:
     def update_all(self):
         """Update all playing videos."""
         for video in self.videos.values():
-            video.update()
+            if video.is_playing:
+                video.update()
     
     def clear(self):
         """Clear all videos."""
