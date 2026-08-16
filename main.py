@@ -191,19 +191,19 @@ class ORVIXA:
     def _process_interactions(self, hands: List, gestures: List):
         # Handle completed shape drawing when PEACE gesture stops
         if not gestures:
-            self.shape_manager.process_two_fingers(None, None)
+            self.shape_manager.process_two_fingers(None, None, None)
             self.drag_state.clear()
             return
 
         if self.drawing_mode:
-            self.shape_manager.process_two_fingers(None, None)
+            self.shape_manager.process_two_fingers(None, None, None)
             self.drag_state.clear()
             return
 
         # Check if PEACE gesture is present, if not complete any shape drawing
         has_peace = any(g.type == GestureType.PEACE for g in gestures)
         if not has_peace:
-            new_object = self.shape_manager.process_two_fingers(None, None)
+            new_object = self.shape_manager.process_two_fingers(None, None, None)
             if new_object:
                 self.workspace.add_object(new_object)
                 self.logger.info(f"Shape created: {new_object.media_type}")
